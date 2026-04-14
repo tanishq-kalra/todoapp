@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>My To-Do List</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="container">
+    <h1>My To-Do List</h1>
+    <button id="themeToggle" onclick="toggleTheme()">🌙 Dark Mode</button>
+    <div class="filters">
+  <button onclick="setFilter('all')">All</button>
+  <button onclick="setFilter('pending')">Pending</button>
+  <button onclick="setFilter('completed')">Completed</button>
+</div>
+
+    <div class="input-box">
+      <input id="todoInput" type="text" placeholder="Enter task">
+      <button onclick="addTodo()">Add</button>
+    </div>
+
+    <ul id="todoList"></ul>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+motor==3.4.0
+python-dotenv
+bcrypt
+pyjwt
+pydantic
+email-validator
+pymongo==4.6.1
+google-auth
+requests
