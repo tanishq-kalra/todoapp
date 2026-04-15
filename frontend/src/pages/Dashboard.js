@@ -1,20 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth, api } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { Label } from '../components/ui/label';
-import { Textarea } from '../components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Checkbox } from '../components/ui/checkbox';
 import { Progress } from '../components/ui/progress';
 import { 
   CheckSquare, 
-  Plus, 
   Search, 
-  Filter, 
   Trash2, 
   Edit, 
   Moon, 
@@ -26,13 +21,11 @@ import {
   ChevronDown,
   ChevronRight,
   BarChart3,
-  User,
-  Crown
+  User
 } from 'lucide-react';
 import { format } from 'date-fns';
 import Profile from '../components/Profile';
 import AddTaskButton from '../components/AddTaskButton';
-import PlanInfo from '../components/PlanInfo';
 
 
 
@@ -42,13 +35,10 @@ const Dashboard = () => {
   const [tasks, setTasks] = useState([]);
   const [filteredTasks, setFilteredTasks] = useState([]);
   const [stats, setStats] = useState(null);
-  const [categories, setCategories] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPriority, setFilterPriority] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [filterCategory, setFilterCategory] = useState('all');
   const [sortBy, setSortBy] = useState('order');
-  const [editingTask, setEditingTask] = useState(null);
   const [expandedTasks, setExpandedTasks] = useState({});
   const [showProfile, setShowProfile] = useState(false);
   const [isAddingTask, setIsAddingTask] = useState(false);
@@ -56,12 +46,7 @@ const Dashboard = () => {
   useEffect(() => {
     fetchTasks();
     fetchStats();
-    fetchCategories();
   }, []);
-
-  useEffect(() => {
-    applyFiltersAndSort();
-  }, [tasks, searchQuery, filterPriority, filterStatus, filterCategory, sortBy]);
 
   const fetchTasks = async () => {
     try {
@@ -81,16 +66,7 @@ const Dashboard = () => {
     }
   };
 
-  const fetchCategories = async () => {
-    try {
-      const { data } = await api.get('/api/categories');
-      setCategories(data);
-    } catch (error) {
-      console.error('Error fetching categories:', error);
-    }
-  };
-
-  const applyFiltersAndSort = () => {
+  const applyFiltersAndSort = useCallback(() => {
     let filtered = [...tasks];
 
     if (searchQuery) {
@@ -110,10 +86,6 @@ const Dashboard = () => {
       );
     }
 
-    if (filterCategory !== 'all') {
-      filtered = filtered.filter(task => task.category === filterCategory);
-    }
-
     filtered.sort((a, b) => {
       if (sortBy === 'priority') {
         const priorityOrder = { high: 0, medium: 1, low: 2 };
@@ -129,7 +101,11 @@ const Dashboard = () => {
     });
 
     setFilteredTasks(filtered);
-  };
+  }, [tasks, searchQuery, filterPriority, filterStatus, sortBy]);
+
+  useEffect(() => {
+    applyFiltersAndSort();
+  }, [applyFiltersAndSort]);
 
   const handleAddTask = async (taskData) => {
     try {
@@ -170,15 +146,6 @@ const Dashboard = () => {
 
   const handleToggleComplete = async (task) => {
     await handleUpdateTask(task.id, { completed: !task.completed });
-  };
-
-  const handleAddSubtask = async (taskId, title) => {
-    try {
-      await api.post(`/api/tasks/${taskId}/subtasks`, { title });
-      fetchTasks();
-    } catch (error) {
-      console.error('Error adding subtask:', error);
-    }
   };
 
   const handleToggleSubtask = async (taskId, subtaskId, completed) => {
@@ -467,7 +434,7 @@ const Dashboard = () => {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  onClick={() => setEditingTask(task)}
+                                  onClick={() => {}}
                                   data-testid={`edit-task-${task.id}`}
                                   className="rounded-full"
                                 >

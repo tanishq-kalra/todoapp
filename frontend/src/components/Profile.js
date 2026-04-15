@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
-import { Button } from './ui/button';
-import { Progress } from './ui/progress';
-import { CheckSquare, Crown, User } from 'lucide-react';
+import { Crown, User } from 'lucide-react';
 import PlanInfo from './PlanInfo';
 import { useAuth, api } from '../contexts/AuthContext';
 
