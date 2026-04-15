@@ -5,7 +5,13 @@ const AuthContext = createContext(null);
 
 export const useAuth = () => useContext(AuthContext);
 
-const API_URL = process.env.REACT_APP_BACKEND_URL;
+const API_URL = process.env.REACT_APP_BACKEND_URL?.replace(/\/$/, "") || "";
+
+if (!API_URL) {
+  console.warn(
+    "REACT_APP_BACKEND_URL is not set. API calls may fail in production."
+  );
+}
 
 const api = axios.create({
   baseURL: API_URL,
@@ -16,11 +22,14 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+    const isRetryEndpoint =
+      originalRequest.url?.endsWith('/api/auth/refresh') ||
+      originalRequest.url?.endsWith('/api/auth/login');
+
     if (
       error.response?.status === 401 &&
       !originalRequest._retry &&
-      originalRequest.url !== '/api/auth/refresh' &&
-      originalRequest.url !== '/api/auth/login'
+      !isRetryEndpoint
     ) {
       originalRequest._retry = true;
       try {
@@ -47,6 +56,12 @@ export const AuthProvider = ({ children }) => {
         setUser(res.data);
       } catch (error) {
         console.error("Auth check failed:", error);
+        setUser(null);
+        try {
+          await api.post("/api/auth/logout");
+        } catch (clearError) {
+          console.warn("Failed to clear invalid auth session:", clearError);
+        }
       }
       setLoading(false);
     };
