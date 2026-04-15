@@ -16,14 +16,23 @@ import bcrypt
 import jwt
 import pymongo
 from pymongo.errors import DuplicateKeyError
+import razorpay
+import hmac
+import hashlib
 
 mongo_url = os.environ['MONGO_URL']
 if "localhost" in mongo_url or "127.0.0.1" in mongo_url:
     from mongomock_motor import AsyncMongoMockClient
     client = AsyncMongoMockClient()
-else:
-    client = AsyncIOMotorClient(mongo_url)
+client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
+
+# Razorpay Setup
+RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID')
+RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET')
+razorpay_client = None
+if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
+    razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 app = FastAPI()
 
@@ -61,7 +70,7 @@ def create_access_token(user_id: str, email: str):
     payload = {
         "sub": user_id,
         "email": email,
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=15)
+        "exp": datetime.now(timezone.utc) + timedelta(days=1)
     }
     return jwt.encode(payload, os.environ["JWT_SECRET"], algorithm=JWT_ALGORITHM)
 
@@ -520,30 +529,83 @@ async def get_stats(user: dict = Depends(get_current_user)):
         "pending": pending
     }
 
-class PlanUpdateRequest(BaseModel):
-    plan: str  # "normal" or "premium"
-    # TODO: Add payment_id for Razorpay integration verification
+class PaymentVerifyRequest(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
 
-@api_router.put("/user/plan")
-async def update_user_plan(plan_data: PlanUpdateRequest, user: dict = Depends(get_current_user)):
-    """
-    Update user plan. This endpoint is prepared for Razorpay integration.
-    In future: Verify payment_id with Razorpay before updating plan.
-    """
-    if plan_data.plan not in ["normal", "premium"]:
-        raise HTTPException(status_code=400, detail="Invalid plan type. Must be 'normal' or 'premium'")
+@api_router.post("/payment/create-order")
+async def create_order(user: dict = Depends(get_current_user)):
+    if not razorpay_client:
+        raise HTTPException(status_code=500, detail="Razorpay is not configured on the server")
     
-    await db.users.update_one(
-        {"_id": user["_id"]},
-        {"$set": {"plan": plan_data.plan, "updated_at": datetime.now(timezone.utc)}}
-    )
+    try:
+        order_amount = 49900  # amount in paise (₹499)
+        order_currency = 'INR'
+        order_receipt = f"rcptid_{str(user['_id'])[-6:]}"
+        
+        # Create Razorpay Order
+        razorpay_order = razorpay_client.order.create(dict(
+            amount=order_amount,
+            currency=order_currency,
+            receipt=order_receipt,
+            payment_capture='1'
+        ))
+        
+        return {
+            "order_id": razorpay_order['id'],
+            "amount": order_amount,
+            "currency": order_currency,
+            "key_id": RAZORPAY_KEY_ID
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/payment/verify")
+async def verify_payment(data: PaymentVerifyRequest, user: dict = Depends(get_current_user)):
+    if not RAZORPAY_KEY_SECRET:
+        raise HTTPException(status_code=500, detail="Razorpay is not configured")
     
-    updated_user = await db.users.find_one({"_id": user["_id"]})
-    return {
-        "message": f"Plan updated to {plan_data.plan}",
-        "plan": updated_user.get("plan", "normal"),
-        "user_id": str(user["_id"])
-    }
+    try:
+        # Debug Logs
+        print(f"order_id: {data.razorpay_order_id}")
+        print(f"payment_id: {data.razorpay_payment_id}")
+        print(f"signature: {data.razorpay_signature}")
+        
+        # Combine order_id + "|" + payment_id
+        msg = f"{data.razorpay_order_id}|{data.razorpay_payment_id}"
+        
+        # Generate HMAC SHA256 signature
+        generated_signature = hmac.new(
+            key=RAZORPAY_KEY_SECRET.encode('utf-8'),
+            msg=msg.encode('utf-8'),
+            digestmod=hashlib.sha256
+        ).hexdigest()
+        
+        # Compare signature safely
+        if not hmac.compare_digest(generated_signature, data.razorpay_signature):
+            print("Signature verification failed!")
+            raise HTTPException(status_code=400, detail="Invalid payment signature")
+            
+        print("Signature verified successfully")
+        
+        # Upgrade the user plan to premium after successful verification
+        await db.users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {
+                "plan": "premium",
+                "upgrade_date": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
+            }}
+        )
+        
+        return {"status": "success", "message": "Payment verified and plan upgraded", "plan": "premium"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Verification error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.get("/user/profile")
 async def get_user_profile(user: dict = Depends(get_current_user)):

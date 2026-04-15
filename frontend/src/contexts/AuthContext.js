@@ -12,6 +12,28 @@ const api = axios.create({
   withCredentials: true,
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    if (
+      error.response?.status === 401 &&
+      !originalRequest._retry &&
+      originalRequest.url !== '/api/auth/refresh' &&
+      originalRequest.url !== '/api/auth/login'
+    ) {
+      originalRequest._retry = true;
+      try {
+        await api.post('/api/auth/refresh');
+        return api(originalRequest);
+      } catch (refreshError) {
+        return Promise.reject(refreshError);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export { api };
 
 export const AuthProvider = ({ children }) => {
@@ -76,7 +98,7 @@ export const AuthProvider = ({ children }) => {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, googleLogin }}>
+    <AuthContext.Provider value={{ user, setUser, loading, login, register, logout, googleLogin }}>
       {children}
     </AuthContext.Provider>
   );

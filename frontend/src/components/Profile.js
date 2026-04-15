@@ -4,18 +4,86 @@ import { Button } from './ui/button';
 import { Progress } from './ui/progress';
 import { CheckSquare, Crown, User } from 'lucide-react';
 import PlanInfo from './PlanInfo';
+import { useAuth, api } from '../contexts/AuthContext';
+
+const loadRazorpay = () => {
+  return new Promise((resolve) => {
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+};
 
 const Profile = ({ user, stats, onClose, isOpen }) => {
+  const { setUser } = useAuth();
   const [upgradeInProgress, setUpgradeInProgress] = useState(false);
 
-  const handleUpgradeToPremium = () => {
+  const handleUpgradeToPremium = async () => {
     setUpgradeInProgress(true);
-    // TODO: Integrate Razorpay here
-    // For now, just show a message
-    setTimeout(() => {
-      alert('Premium upgrade will be available soon! Razorpay integration coming.');
+    
+    // Load Razorpay script
+    const isLoaded = await loadRazorpay();
+    if (!isLoaded) {
+      alert("Razorpay SDK failed to load. Are you online?");
       setUpgradeInProgress(false);
-    }, 500);
+      return;
+    }
+
+    try {
+      // 1. Create order on backend
+      const response = await api.post('/api/payment/create-order');
+      const { order_id, amount, currency, key_id } = response.data;
+
+      // 2. Open Razorpay Checkout
+      const options = {
+        key: key_id,
+        amount: amount,
+        currency: currency,
+        name: "Todo SaaS",
+        description: "Premium Plan Upgrade",
+        order_id: order_id,
+        handler: async function (res) {
+          try {
+            // 3. Verify payment on backend
+            const verifyResponse = await api.post('/api/payment/verify', {
+              razorpay_order_id: res.razorpay_order_id,
+              razorpay_payment_id: res.razorpay_payment_id,
+              razorpay_signature: res.razorpay_signature,
+            });
+
+            if (verifyResponse.data.status === "success") {
+              alert("Payment successful! You are now a Premium user.");
+              // Update global user state seamlessly
+              setUser(prev => ({ ...prev, plan: "premium" }));
+            }
+          } catch (err) {
+            console.error(err);
+            alert("Payment verification failed! " + (err.response?.data?.detail || ""));
+          }
+        },
+        prefill: {
+          name: user?.name,
+          email: user?.email,
+        },
+        theme: {
+          color: "#000000",
+        },
+      };
+
+      const paymentObject = new window.Razorpay(options);
+      paymentObject.on("payment.failed", function (response) {
+        alert("Payment failed! Please try again.");
+      });
+      paymentObject.open();
+
+    } catch (error) {
+       console.error("Error creating order:", error);
+       alert("Error creating order: " + (error.response?.data?.detail || error.message));
+    } finally {
+      setUpgradeInProgress(false);
+    }
   };
 
   return (
