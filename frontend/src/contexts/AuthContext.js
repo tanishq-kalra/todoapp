@@ -92,13 +92,20 @@ export const AuthProvider = ({ children }) => {
   };
 
   const register = async (name, email, password) => {
-    const res = await api.post(`/api/auth/register`, {
-      name,
-      email,
-      password,
-    });
-    localStorage.setItem("token", res.data.token);
-    setUser(res.data.user);
+    try {
+      const res = await api.post(`/api/auth/register`, {
+        name,
+        email,
+        password,
+      });
+      localStorage.setItem("token", res.data.token);
+      setUser(res.data.user);
+    } catch (error) {
+      if (error.response?.status === 409) {
+        throw new Error("User already exists. Please login.");
+      }
+      throw error;
+    }
   };
 
   const logout = async () => {
