@@ -84,10 +84,15 @@ def create_refresh_token(user_id: str):
     return jwt.encode(payload, secret, algorithm=JWT_ALGORITHM)
 
 async def get_current_user(request: Request):
-    # Enforce HttpOnly Cookie strictly
+    # Check for token in HttpOnly Cookie or Authorization header
     token = request.cookies.get("access_token")
-            
+    
     if not token or token == "undefined" or token == "null":
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    
+    if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     
     try:

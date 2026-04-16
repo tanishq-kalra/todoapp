@@ -18,6 +18,17 @@ const api = axios.create({
   withCredentials: true,
 });
 
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem("token");
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -33,9 +44,11 @@ api.interceptors.response.use(
     ) {
       originalRequest._retry = true;
       try {
-        await api.post('/api/auth/refresh');
+        const refreshRes = await api.post('/api/auth/refresh');
+        localStorage.setItem("token", refreshRes.data.token);
         return api(originalRequest);
       } catch (refreshError) {
+        localStorage.removeItem("token");
         return Promise.reject(refreshError);
       }
     }
@@ -74,6 +87,7 @@ export const AuthProvider = ({ children }) => {
       email,
       password,
     });
+    localStorage.setItem("token", res.data.token);
     setUser(res.data.user);
   };
 
@@ -83,6 +97,7 @@ export const AuthProvider = ({ children }) => {
       email,
       password,
     });
+    localStorage.setItem("token", res.data.token);
     setUser(res.data.user);
   };
 
@@ -92,11 +107,13 @@ export const AuthProvider = ({ children }) => {
     } catch (e) {
       // Background ping failure handled securely
     }
+    localStorage.removeItem("token");
     setUser(null);
   };
 
   const googleLogin = async (credential) => {
     const res = await api.post(`/api/auth/google`, { credential });
+    localStorage.setItem("token", res.data.token);
     setUser(res.data.user);
   };
 
