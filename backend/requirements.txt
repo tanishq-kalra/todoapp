@@ -10,3 +10,5 @@ pymongo==4.6.1
 google-auth
 requests
 razorpay
+redis
+pyotp

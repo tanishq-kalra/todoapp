@@ -19,6 +19,9 @@ from pymongo.errors import DuplicateKeyError
 import razorpay
 import hmac
 import hashlib
+import redis
+import json
+import pyotp
 
 mongo_url = os.environ['MONGO_URL']
 if "localhost" in mongo_url or "127.0.0.1" in mongo_url:
@@ -33,6 +36,14 @@ RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET')
 razorpay_client = None
 if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
     razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+
+# Redis Setup
+redis_client = redis.Redis(host="redis", port=6379, decode_responses=True)
+
+def invalidate_tasks_cache(user_id):
+    """Invalidate tasks cache for a specific user"""
+    cache_key = f"tasks:{str(user_id)}"
+    redis_client.delete(cache_key)
 
 app = FastAPI()
 
@@ -83,6 +94,23 @@ def create_refresh_token(user_id: str):
     secret = os.environ.get("JWT_REFRESH_SECRET", os.environ["JWT_SECRET"])
     return jwt.encode(payload, secret, algorithm=JWT_ALGORITHM)
 
+def generate_otp():
+    """Generate a time-based OTP using pyotp"""
+    secret = pyotp.random_base32()
+    totp = pyotp.TOTP(secret, interval=300)
+    return totp.now()
+
+def store_otp(email: str, otp: str):
+    """Store OTP in Redis with 5-minute expiry"""
+    redis_client.set(f"otp:{email}", otp, ex=300)
+
+def verify_otp_with_redis(email: str, otp: str) -> bool:
+    """Verify OTP from Redis"""
+    stored_otp = redis_client.get(f"otp:{email}")
+    if not stored_otp:
+        return False
+    return stored_otp == otp
+
 async def get_current_user(request: Request):
     # Check for token in HttpOnly Cookie or Authorization header
     token = request.cookies.get("access_token")
@@ -115,6 +143,13 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+class SendOTPRequest(BaseModel):
+    email: EmailStr
+
+class VerifyOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str
 
 class TaskCreate(BaseModel):
     title: str
@@ -354,8 +389,82 @@ async def logout(request: Request, response: Response):
 async def get_me(user: dict = Depends(get_current_user)):
     return {"id": str(user["_id"]), "name": user["name"], "email": user["email"], "plan": user.get("plan", "normal")}
 
+@api_router.post("/auth/send-otp")
+async def send_otp(data: SendOTPRequest):
+    """Generate and send OTP to user email (prints to console)"""
+    normalized_email = normalize_email(data.email)
+    
+    # Check if user exists
+    user = await db.users.find_one({"email": normalized_email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Generate OTP
+    otp = generate_otp()
+    
+    # Store OTP in Redis
+    store_otp(normalized_email, otp)
+    
+    # Print OTP to console (demo purpose - replace with email service in production)
+    print(f"\n{'='*50}")
+    print(f"OTP for {normalized_email}: {otp}")
+    print(f"OTP expires in 5 minutes")
+    print(f"{'='*50}\n")
+    
+    return {"message": "OTP sent successfully", "email": normalized_email}
+
+@api_router.post("/auth/verify-otp")
+async def verify_otp(data: VerifyOTPRequest, response: Response):
+    """Verify OTP and issue access token"""
+    normalized_email = normalize_email(data.email)
+    
+    # Find user
+    user = await db.users.find_one({"email": normalized_email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Verify OTP
+    if not verify_otp_with_redis(normalized_email, data.otp):
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+    
+    # OTP verified successfully - delete it from Redis
+    redis_client.delete(f"otp:{normalized_email}")
+    
+    # Create tokens
+    user_id_str = str(user["_id"])
+    access_token = create_access_token(user_id_str, normalized_email)
+    refresh_token = create_refresh_token(user_id_str)
+    
+    # Store refresh token in database
+    await db.refresh_tokens.insert_one({
+        "user_id": user_id_str,
+        "token": refresh_token,
+        "created_at": datetime.now(timezone.utc)
+    })
+    
+    # Set cookies
+    response.set_cookie(key="access_token", value=access_token, httponly=True, max_age=900, samesite="lax")
+    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, max_age=604800, samesite="lax")
+    
+    return {
+        "message": "OTP verified successfully",
+        "token": access_token,
+        "user": {
+            "id": user_id_str,
+            "name": user["name"],
+            "email": normalized_email,
+            "plan": user.get("plan", "normal")
+        }
+    }
+
 @api_router.get("/tasks")
 async def get_tasks(user: dict = Depends(get_current_user)):
+    cache_key = f"tasks:{str(user['_id'])}"
+    cached = redis_client.get(cache_key)
+    
+    if cached:
+        return json.loads(cached)
+    
     tasks = await db.tasks.find({"user_id": user["_id"]}).sort("order", 1).to_list(None)
     for task in tasks:
         task["id"] = str(task["_id"])
@@ -367,6 +476,8 @@ async def get_tasks(user: dict = Depends(get_current_user)):
             for subtask in task["subtasks"]:
                 subtask["id"] = str(subtask["_id"])
                 del subtask["_id"]
+    
+    redis_client.set(cache_key, json.dumps(tasks), ex=300)
     return tasks
 
 @api_router.post("/tasks")
@@ -400,6 +511,7 @@ async def create_task(task_data: TaskCreate, user: dict = Depends(get_current_us
     task["user_id"] = str(task["user_id"])
     if task.get("due_date"):
         task["due_date"] = task["due_date"].isoformat()
+    invalidate_tasks_cache(user["_id"])
     return task
 
 @api_router.put("/tasks/{task_id}")
@@ -423,6 +535,7 @@ async def update_task(task_id: str, task_data: TaskUpdate, user: dict = Depends(
         for subtask in updated_task["subtasks"]:
             subtask["id"] = str(subtask["_id"])
             del subtask["_id"]
+    invalidate_tasks_cache(user["_id"])
     return updated_task
 
 @api_router.delete("/tasks/{task_id}")
@@ -430,6 +543,7 @@ async def delete_task(task_id: str, user: dict = Depends(get_current_user)):
     result = await db.tasks.delete_one({"_id": ObjectId(task_id), "user_id": user["_id"]})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Task not found")
+    invalidate_tasks_cache(user["_id"])
     return {"message": "Task deleted"}
 
 class ReorderRequest(BaseModel):
@@ -455,6 +569,7 @@ async def reorder_task(task_id: str, data: ReorderRequest, user: dict = Depends(
         )
     
     await db.tasks.update_one({"_id": ObjectId(task_id)}, {"$set": {"order": new_order}})
+    invalidate_tasks_cache(user["_id"])
     return {"message": "Task reordered"}
 
 @api_router.post("/tasks/{task_id}/subtasks")
@@ -477,6 +592,7 @@ async def create_subtask(task_id: str, subtask_data: SubtaskCreate, user: dict =
     
     subtask["id"] = str(subtask["_id"])
     del subtask["_id"]
+    invalidate_tasks_cache(user["_id"])
     return subtask
 
 @api_router.put("/tasks/{task_id}/subtasks/{subtask_id}")
@@ -502,6 +618,7 @@ async def update_subtask(task_id: str, subtask_id: str, subtask_data: SubtaskUpd
         for subtask in updated_task["subtasks"]:
             subtask["id"] = str(subtask["_id"])
             del subtask["_id"]
+    invalidate_tasks_cache(user["_id"])
     return updated_task
 
 @api_router.delete("/tasks/{task_id}/subtasks/{subtask_id}")
@@ -514,6 +631,7 @@ async def delete_subtask(task_id: str, subtask_id: str, user: dict = Depends(get
         {"_id": ObjectId(task_id)},
         {"$pull": {"subtasks": {"_id": ObjectId(subtask_id)}}}
     )
+    invalidate_tasks_cache(user["_id"])
     return {"message": "Subtask deleted"}
 
 @api_router.get("/categories")
