@@ -49,7 +49,10 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # temporary fix
+    allow_origins=[
+    "http://localhost:3000",
+    "https://todokalra.netlify.app"
+],  # temporary fix
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
