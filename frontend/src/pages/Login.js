@@ -43,6 +43,7 @@ const handleSendOtp = async (e) => {
     await api.post("/api/auth/send-otp", { email })
     setOtpSent(true)
   } catch (err) {
+    console.log(err.response || err.message)
     setError(err?.response?.data?.detail || err.message || "Failed to send OTP")
   } finally {
     setLoading(false)
@@ -67,6 +68,7 @@ const handleVerifyOtp = async (e) => {
     }
     navigate("/dashboard")
   } catch (err) {
+    console.log(err.response || err.message)
     setError(err?.response?.data?.detail || err.message || "Invalid or expired OTP")
   } finally {
     setLoading(false)
