@@ -752,6 +752,8 @@ async def get_user_profile(user: dict = Depends(get_current_user)):
 
 app.include_router(api_router)
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
