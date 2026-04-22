@@ -418,11 +418,46 @@ async def send_otp(data: SendOTPRequest):
     # Store OTP in Redis
     store_otp(normalized_email, otp)
     
-    # Print OTP to console (demo purpose - replace with email service in production)
-    print(f"\n{'='*50}")
-    print(f"OTP for {normalized_email}: {otp}")
-    print(f"OTP expires in 5 minutes")
-    print(f"{'='*50}\n")
+    GMAIL_USER = os.environ.get("GMAIL_USER")
+    GMAIL_PASSWORD = os.environ.get("GMAIL_PASSWORD")
+
+    if GMAIL_USER and GMAIL_PASSWORD:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = "Your Verification Code"
+            msg["From"] = GMAIL_USER
+            msg["To"] = normalized_email
+
+            html = f"""
+            <html>
+              <body>
+                <h2>Your Verification Code</h2>
+                <p>Use the code below to sign in to your account.</p>
+                <div style="background-color: #f1f5f9; padding: 16px; border-radius: 8px; margin: 16px 0; text-align: center;">
+                    <h1 style="color: #16a34a; letter-spacing: 4px; margin: 0;">{otp}</h1>
+                </div>
+                <p>This code expires in 5 minutes.</p>
+                <p style="color: #64748b; font-size: 12px;">If you didn't request this code, you can safely ignore this email.</p>
+              </body>
+            </html>
+            """
+            
+            part = MIMEText(html, "html")
+            msg.attach(part)
+            
+            server = smtplib.SMTP("smtp.gmail.com", 587)
+            server.starttls()
+            server.login(GMAIL_USER, GMAIL_PASSWORD)
+            server.sendmail(GMAIL_USER, normalized_email, msg.as_string())
+            server.quit()
+        except Exception as e:
+            print(f"Failed to send email to {normalized_email}: {e}")
+    else:
+        print(f"Warning: GMAIL_USER or GMAIL_PASSWORD not set. OTP for {normalized_email} is {otp}")
     
     return {
         "message": "OTP sent successfully",
