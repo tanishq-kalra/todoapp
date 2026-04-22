@@ -38,7 +38,9 @@ if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
     razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 # Redis Setup
-redis_client = redis.Redis(host="redis", port=6379, decode_responses=True)
+import os
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 def invalidate_tasks_cache(user_id):
     """Invalidate tasks cache for a specific user"""
@@ -422,7 +424,10 @@ async def send_otp(data: SendOTPRequest):
     print(f"OTP expires in 5 minutes")
     print(f"{'='*50}\n")
     
-    return {"message": "OTP sent successfully", "email": normalized_email}
+    return {
+        "message": "OTP sent successfully",
+        "debug_otp": otp if os.environ.get("DEBUG_OTP") == "true" else None
+    }
 
 @api_router.post("/auth/verify-otp")
 async def verify_otp(data: VerifyOTPRequest, response: Response):
